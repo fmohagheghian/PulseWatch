@@ -1,0 +1,192 @@
+
+test_PPG_path =  'R:\ENGR_Chon\NIH_Pulsewatch_Database\AFData_uconn_edu_Data\005\005'; % folder where exported mat file located.
+test_ECG_path = 'R:\ENGR_Chon\NIH_Pulsewatch_Database\Patch_ECG_Converted_Data\Pulsewatch005A';
+fs_PPG=50;
+fs_ACC=50;
+%% All_PPG_file_name
+All_PPG_file_name=[];
+for ii=1:size(output_struct,1)
+    for jj=1:length(output_struct(ii).PPG_name_cell)
+        All_PPG_file_name{count,1} = output_struct(ii).PPG_name_cell{jj};
+        count=count+1;
+    end
+end
+%% PPG_struct
+PPG_struct = [];
+ii_old = [];
+for ii=1:length(All_PPG_file_name)
+    if ~isempty(All_PPG_file_name{ii,1})
+        PPG_struct(ii).PPG_name = All_PPG_file_name{ii,1};
+        nt= All_PPG_file_name{ii,1}(5:23);
+        ns = str2num(All_PPG_file_name{ii,1}(29:32));
+        dt = datetime(nt,'InputFormat','yyyy_MM_dd_HH_mm_ss')+seconds(ns*30);
+        PPG_struct(ii).PPG_time = dt;
+        if ~isempty(ii_old)
+        PPG_struct(ii_old).PPG_dur =  etime(datevec(dt),datevec(dt_old));
+        end
+        ii_old = ii;
+        dt_old = dt;
+    end
+end
+%%
+for kk=1:length(Aligned_output) % total ECG 1_hour_segments
+    ecg_seg = Aligned_output{kk,1}.ecg_seg;
+    start_p = Aligned_output{kk,1}.start_p;
+    PPG_ind = Aligned_output{kk,1}.PPG_ind;
+    total_PPG_seg = Aligned_output{kk,1}.total_PPG_seg;
+    % Reading ECG data
+    if ecg_seg<10
+        ECG_file_name = strcat (test_ECG_path,'\' ,'Pulsewatch005A_00', num2str(ecg_seg), '.mat');
+    elseif ecg_seg>9 && ecg_seg<100
+        ECG_file_name = strcat (test_ECG_path,'\' ,'Pulsewatch005A_0', num2str(ecg_seg), '.mat');
+    elseif ecg_seg>99
+        ECG_file_name = strcat (test_ECG_path,'\' ,'Pulsewatch005A_', num2str(ecg_seg), '.mat');
+    end
+    load(ECG_file_name)
+    ECG_raw_data = Data(:,2);
+    ECG_time = Data (:,1);
+    % Interpolate ECG data (correct way):
+    x = ECG_time;
+    v = ECG_raw_data;
+    xq = ECG_time(1):1/fs_ECG:ECG_time(end);
+    xq = xq(:);
+    vq1 = interp1(x,v,xq);
+    ECG_interp1_data = vq1;
+    ECG_time = xq;
+    clear x v xq vq1;
+    ECG_raw_data = ECG_interp1_data;
+    clear ECG_interp1_data;
+    % Filtering ECG data
+    [b,a] = butter(3,0.4 /(fs_ECG/2),'high');
+    ECG_data = filtfilt(b,a,ECG_raw_data(:,1));
+    [b,a] = butter(3,20/(fs_ECG/2),'low');%25 /(fs_ECG/2),'low');
+    ECG_data = filtfilt(b,a,ECG_data);
+    ECG_data = ECG_data/max(abs(ECG_data));
+    ECG_data=ECG_data-mean(ECG_data);
+    ECG_data=ECG_data/abs(std(ECG_data));
+    %
+    table_file_name = cell(total_PPG_seg,1);
+    actual_index = NaN(total_PPG_seg,1);
+    m_op = NaN(total_PPG_seg,1);
+    m_HR_DATPD = NaN(total_PPG_seg,1);
+    m_HR_SWEPD = NaN(total_PPG_seg,1);
+    m_HR_WEPD = NaN(total_PPG_seg,1);
+    m_comb = NaN(total_PPG_seg,1);
+    m_RMSSD = NaN(total_PPG_seg,1);
+    m_SampEn = NaN(total_PPG_seg,1);
+    m_IsAF = NaN(total_PPG_seg,1);
+    m_PACPVC_pred = NaN(total_PPG_seg,1);
+    m_FastAF = NaN(total_PPG_seg,1);
+    m_HR = NaN(total_PPG_seg,1);
+    PC_op = NaN(total_PPG_seg,1);
+    PC_HR_DATPD = NaN(total_PPG_seg,1);
+    PC_HR_SWEPD = NaN(total_PPG_seg,1);
+    PC_HR_WEPD = NaN(total_PPG_seg,1);
+    PC_comb = NaN(total_PPG_seg,1);
+    PC_RMSSD = NaN(total_PPG_seg,1);
+    PC_SampEn = NaN(total_PPG_seg,1);
+    PC_IsAF = NaN(total_PPG_seg,1);
+    PC_IsAF_Resp = NaN(total_PPG_seg,1);
+    PC_IsAF_final = NaN(total_PPG_seg,1);
+    PC_PACPVC_pred = NaN(total_PPG_seg,1);
+    PC_FastAF = NaN(total_PPG_seg,1);
+    PC_HR = NaN(total_PPG_seg,1);
+    ECG_Noise = NaN(total_PPG_seg,1);
+    Temp_table=[];
+
+    %% Select 30sec PPG
+    t_elp = 0;
+    t_init = start_p;
+    for ii = 1:total_PPG_seg
+        if ~isempty(PPG_struct(PPG_ind).PPG_time)
+            PPG_file_name = PPG_struct(PPG_ind).PPG_name;
+            ACC_file_name = strcat(PPG_file_name(1:24), 'accel', PPG_file_name(28:end));
+            PPG_name = strcat(test_PPG_path,'\',PPG_file_name);
+            ACC_name = strcat(test_PPG_path,'\',ACC_file_name);
+            PPG_raw_buffer = importdata(PPG_name);
+            ACC_raw_buffer = importdata(ACC_name);
+            unique_num_name =  cellstr(PPG_file_name);
+            seg_diary = cell(size(PPG_raw_buffer));
+            count_table = ii;
+            %% Select aligned 30sec ECG
+            t_init = t_init + (t_elp*fs_ECG);
+            t_end = t_init + 30*fs_ECG ;
+            if t_init < length(ECG_data) && t_end <= length(ECG_data)
+                ecg_in =  ECG_data( t_init: t_end-1 );
+                % Billal ECG peak detction
+                [~,y_rec,R_locs11]= Rfrom2side(ecg_in,fs_ECG);
+                wbwrefHR = 60./diff(R_locs11)*fs_ECG;
+                
+                %% PPG peak detection
+                if ~isempty(PPG_raw_buffer) && ~isempty(ACC_raw_buffer)
+                    [count_table,...
+                        m_op,PC_op,...
+                        m_HR_WEPD,PC_HR_WEPD,...
+                        m_HR_DATPD,PC_HR_DATPD,...
+                        m_HR_SWEPD,PC_HR_SWEPD,...
+                        m_HR,PC_HR,...
+                        m_IsAF,PC_IsAF,...
+                        m_RMSSD,PC_RMSSD,...
+                        m_SampEn,PC_SampEn,...
+                        m_comb,PC_comb,...
+                        m_PACPVC_pred,PC_PACPVC_pred,...
+                        m_FastAF,PC_FastAF,...
+                        output_WEPD,...
+                        output_AF_Detection,...
+                        output_DATPD,...
+                        output_PACPVC,...
+                        output_SWEPD,...
+                        table_file_name,...
+                        actual_index] = my_algorithm2(PPG_raw_buffer,ACC_raw_buffer,...
+                        fs_PPG,fs_ACC,...
+                        seg_diary,...
+                        jj,...
+                        count_table,...
+                        m_op,PC_op,...
+                        m_HR_WEPD,PC_HR_WEPD,...
+                        m_HR_DATPD,PC_HR_DATPD,...
+                        m_HR_SWEPD,PC_HR_SWEPD,...
+                        m_HR,PC_HR,...
+                        m_IsAF,PC_IsAF,...
+                        m_RMSSD,PC_RMSSD,...
+                        m_SampEn,PC_SampEn,...
+                        m_comb,PC_comb,...
+                        m_PACPVC_pred,PC_PACPVC_pred,...
+                        m_FastAF,PC_FastAF,...
+                        unique_num_name,...
+                        ii,...
+                        PPG_file_name,ACC_file_name,...
+                        table_file_name,...
+                        actual_index,...
+                        test_PPG_path);
+                    
+                    PPG_Prep =[]; ACC_Prep =[];
+                    [b, a] = butter(6,0.5/(fs_PPG/2),'high');
+                    PPG_Prep = filtfilt(b, a, PPG_raw_buffer);
+                    [b, a] = butter(6,20/(fs_PPG/2), 'low');
+                    PPG_Prep = filtfilt(b, a, PPG_Prep);
+                    PPG_Prep=PPG_Prep/max(abs(PPG_Prep));
+                    PPG_Prep=PPG_Prep-mean(PPG_Prep);
+                    PPG_Prep=PPG_Prep/abs(std(PPG_Prep));
+                    
+                    [b, a] = butter(6,0.5/(fs_ACC/2),'high');
+                    ACC_Prep = filtfilt(b, a, ACC_raw_buffer);
+                    [b, a] = butter(6,20/(fs_ACC/2), 'low');
+                    ACC_Prep = filtfilt(b, a, ACC_Prep);
+                    ACC_Prep=ACC_Prep/max(abs(ACC_Prep));
+                    ACC_Prep=ACC_Prep-mean(ACC_Prep);
+                    ACC_Prep=ACC_Prep/abs(std(ACC_Prep));
+                    
+                    %% plot & save ECG/PPG signal
+                    my_SignalWindowPlotting_concise1(PPG_Prep ,ecg_in ,ACC_Prep , R_locs11 , wbwrefHR, output_WEPD ,output_DATPD ,output_SWEPD, fs_ECG , fs_PPG, fs_ACC, ii, jj, uid_num, PPG_file_name,y_rec)
+                    %                 save_fig = strcat(save_FolderName,'_',PPG_file_name(5:32),'.tif');
+                    %                 saveas(gcf,save_fig);
+                    close all
+                    ind_old = PPG_ind;
+                end
+            end
+        end
+        PPG_ind=PPG_ind+1;
+        t_elp = etime(datevec(PPG_struct(PPG_ind).PPG_time),datevec(PPG_struct(ind_old).PPG_time));
+    end
+end
